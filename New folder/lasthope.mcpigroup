@@ -1,0 +1,6 @@
+[PROJECTS]
+Count=2
+Project0=..\..\Downloads\ToPC\easyPIC\mtouch\code\MyProject.mcppi
+Project1=lasthope.mcppi
+[ActiveProject]
+Index=1
