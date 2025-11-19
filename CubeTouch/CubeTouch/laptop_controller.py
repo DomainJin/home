@@ -41,7 +41,7 @@ class ESP32LEDController:
             return False
     
     def udp_listener(self):
-        """Lắng nghe dữ liệu UDP từ ESP32 (chạy trong thread riêng)"""
+        """Lắng nghe dữ liệu UDP từ ESP32 (chạy trong thre44444wad riêng)"""
         while True:
             try:
                 data, addr = self.sock.recvfrom(1024)

@@ -1,23 +1,6 @@
 main
 	__CC2DW
 		____DoICP
-	Lcd_Init
-		Delay_5500us
-		Delay_1us
-	Lcd_Cmd
-		Delay_1us
-		Delay_5500us
-		Delay_50us
-	Lcd_Out
-		Lcd_Cmd
-			Delay_1us
-			Delay_5500us
-			Delay_50us
-		Lcd_Chr_CP
-			Lcd_Cmd
-				Delay_1us
-				Delay_5500us
-				Delay_50us
 	UART1_Init
 	UART1_Write_Text
 		UART1_Write
@@ -28,9 +11,11 @@ main
 		WordToStr
 			Div_16X16_U
 		Div_32x32_U
-	UART1_Data_Ready
-	UART1_Read
+	process_uart_data
+		UART1_Data_Ready
+		UART1_Read
+		Mul_16X16_U
+		UART1_Write
 	Mul_8X8_U
 	WordToStr
 		Div_16X16_U
-	UART1_Write

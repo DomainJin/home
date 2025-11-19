@@ -14,7 +14,7 @@ IPAddress subnet(255, 255, 255, 0);
 
 // Laptop IP and UDP port
 IPAddress laptop_IP(192, 168, 0, 159);
-const unsigned int udpPort = 7000;
+const unsigned int udpMonitorPort = 7000;
 
 WiFiUDP udp;
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);

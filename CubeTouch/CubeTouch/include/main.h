@@ -16,8 +16,8 @@
 #define LED_COUNT  100
 
 // UART 
-#define UART_TX_PIN 33  // TX pin 
-#define UART_RX_PIN 26  // RX pin 
+#define UART_TX_PIN 26  // TX pin 
+#define UART_RX_PIN 33  // RX pin 
 #define UART_BAUD 9600
 
 // Task priorities
@@ -56,7 +56,7 @@ extern IPAddress local_IP;
 extern IPAddress gateway;
 extern IPAddress subnet;
 extern IPAddress laptop_IP;
-extern const unsigned int udpPort;
+extern const unsigned int udpMonitorPort;
 
 // Global objects
 extern WiFiUDP udp;

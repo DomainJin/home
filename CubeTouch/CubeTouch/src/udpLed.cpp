@@ -3,10 +3,18 @@
 #include "uart.h"
 
 void initUDP() {
-    udp.begin(udpPort);
-    if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        Serial.printf("UDP server started on port %d\n", udpPort);
-        xSemaphoreGive(serialMutex);
+    if (udp.begin(udpMonitorPort)) {
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.printf("UDP server started successfully on port %d\n", udpMonitorPort);
+            Serial.printf("ESP32 IP: %s\n", WiFi.localIP().toString().c_str());
+            Serial.printf("Laptop IP: %s\n", laptop_IP.toString().c_str());
+            xSemaphoreGive(serialMutex);
+        }
+    } else {
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.printf("FAILED to start UDP server on port %d\n", udpMonitorPort);
+            xSemaphoreGive(serialMutex);
+        }
     }
 }
 
@@ -73,7 +81,7 @@ void processCommand(JsonDocument& doc) {
 }
 
 void sendResponse(String message) {
-    udp.beginPacket(laptop_IP, udpPort);
+    udp.beginPacket(laptop_IP, udpMonitorPort);
     udp.print(message);
     udp.endPacket();
 }

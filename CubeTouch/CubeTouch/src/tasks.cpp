@@ -39,6 +39,17 @@ void wifiTask(void *parameter) {
     // Start UDP
     initUDP();
     
+    // Test network connectivity by sending a ping packet
+    if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        Serial.println("Sending startup notification to laptop...");
+        xSemaphoreGive(serialMutex);
+    }
+    
+    // Send startup notification
+    udp.beginPacket(laptop_IP, udpMonitorPort);
+    udp.print("{\"status\":\"ESP32_READY\",\"ip\":\"" + WiFi.localIP().toString() + "\"}");
+    udp.endPacket();
+    
     // Monitor WiFi status
     while (1) {
         if (WiFi.status() != WL_CONNECTED) {
@@ -57,8 +68,18 @@ void wifiTask(void *parameter) {
 
 // UDP Task - runs on Core 0
 void udpTask(void *parameter) {
+    // Wait for WiFi to be connected before starting UDP operations
+    while (WiFi.status() != WL_CONNECTED) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    
+    if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        Serial.println("UDP Task started - listening for packets");
+        xSemaphoreGive(serialMutex);
+    }
+    
     while (1) {
-        // Only check for packets if UDP is properly initialized
+        // Check for packets with better error handling
         if (udp.available()) {
             int packetSize = udp.parsePacket();
             if (packetSize > 0) {
@@ -68,7 +89,9 @@ void udpTask(void *parameter) {
                     incomingPacket[len] = 0;
                     
                     if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                        Serial.printf("Received from laptop: %s\n", incomingPacket);
+                        Serial.printf("Received UDP packet from %s:%d - Size: %d bytes\n", 
+                                    udp.remoteIP().toString().c_str(), udp.remotePort(), packetSize);
+                        Serial.printf("Packet content: %s\n", incomingPacket);
                         xSemaphoreGive(serialMutex);
                     }
                     
@@ -92,8 +115,8 @@ void udpTask(void *parameter) {
             }
         }
         
-        // Longer delay to reduce UDP polling frequency
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Shorter delay for more responsive UDP handling
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
