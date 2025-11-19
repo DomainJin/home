@@ -3,8 +3,11 @@
 #include <WiFiUdp.h>
 #include <Adafruit_NeoPixel.h>
 
-
-
+// Auto-Discovery Configuration
+#define ENABLE_AUTO_DISCOVERY true  // Set to false for classic mode only
+#define ESP_NAME "ESP32_CubeTouch01"  // Unique ESP name for identification
+#define HEARTBEAT_INTERVAL 5000      // Heartbeat every 5 seconds
+#define MAX_HEARTBEAT_ATTEMPTS 5     // Max attempts before fallback
 
 #define mainEffectTime 6000
 #define operationTime 2000
@@ -15,41 +18,185 @@
 
 
 Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_BGR + NEO_KHZ400);
-// WiFi và OSC
+
+// WiFi Configuration
 const char* ssid = "Cube Touch";
 const char* password = "admin123";
 
-
-
+// Network Communication
 WiFiUDP UdpPortSend;
 WiFiUDP udp;
+WiFiUDP discoveryUdp;  // Dedicated UDP for discovery
+
+// Auto-Discovery Variables
+String computer_ip = "192.168.0.159";  // Will be auto-detected
+const unsigned int discovery_port = 7000;  // Port for heartbeat discovery
+unsigned int assigned_port = 0;  // Dynamically assigned port
+bool discovery_mode = ENABLE_AUTO_DISCOVERY;
+bool port_assigned = false;
+unsigned long last_heartbeat = 0;
+int heartbeat_attempts = 0;
+
+// Classic Mode Configuration (fallback)
+const IPAddress classic_laptop_ip(192, 168, 0, 159);
+const unsigned int classic_laptop_port = 7000;
+
+// Current active configuration
+IPAddress active_laptop_ip;
+unsigned int active_laptop_port;
 
 
-
-
-// Địa chỉ và cổng OSC laptop và Resolume
-
-// IP Resolume mặc định - có thể thay đổi qua lệnh
+// Resolume Configuration  
 IPAddress resolume_ip(192, 168, 0, 241);
 const unsigned int resolume_port = 7000;
 
-
-
-
-const IPAddress laptop_ip(192, 168, 0, 159);
-const unsigned int laptop_port = 7000;
+// Local UDP Configuration
 unsigned int localUdpPort = 4210;
-
-
-
+unsigned int discoveryLocalPort = 8888;  // Local port for discovery
 
 char incomingPacket[255];  
 int brightness = 255;    // Độ sáng mặc định (0-255)
 int last_r = 43, last_g = 159, last_b = 2;   // Lưu màu cuối cùng
 bool configMode = false; // Config mode - cho phép điều khiển LED từ xa
+bool touchProcessingDisabled;
 
+// Device Status
+String device_status = "Initializing";
+bool connection_established = false;
 
+// Auto-Discovery Functions
+void sendHeartbeat() {
+  if (!discovery_mode || port_assigned) return;
+  
+  unsigned long current_time = millis();
+  if (current_time - last_heartbeat < HEARTBEAT_INTERVAL) return;
+  
+  last_heartbeat = current_time;
+  heartbeat_attempts++;
+  
+  String heartbeat_message = "HEARTBEAT:" + String(ESP_NAME);
+  
+  // Try to send heartbeat to discovery port
+  discoveryUdp.beginPacket(computer_ip.c_str(), discovery_port);
+  discoveryUdp.print(heartbeat_message);
+  discoveryUdp.endPacket();
+  
+  Serial.printf("[DISCOVERY] Sent heartbeat #%d: %s -> %s:%d\n", 
+                heartbeat_attempts, heartbeat_message.c_str(), 
+                computer_ip.c_str(), discovery_port);
+  
+  // Fallback to classic mode if too many attempts
+  if (heartbeat_attempts >= MAX_HEARTBEAT_ATTEMPTS) {
+    Serial.println("[DISCOVERY] Max attempts reached, falling back to classic mode");
+    fallbackToClassicMode();
+  }
+}
 
+void checkPortAssignment() {
+  if (!discovery_mode || port_assigned) return;
+  
+  int packetSize = discoveryUdp.parsePacket();
+  if (packetSize) {
+    char response[255];
+    int len = discoveryUdp.read(response, 254);
+    response[len] = 0;
+    
+    Serial.printf("[DISCOVERY] Received: %s\n", response);
+    
+    if (strncmp(response, "PORT_ASSIGNED:", 14) == 0) {
+      assigned_port = atoi(response + 14);
+      port_assigned = true;
+      device_status = "Connected";
+      connection_established = true;
+      
+      // Set active configuration to assigned port
+      active_laptop_ip = IPAddress();
+      active_laptop_ip.fromString(computer_ip);
+      active_laptop_port = assigned_port;
+      
+      // Switch main UDP to assigned port
+      udp.stop();
+      udp.begin(localUdpPort);
+      
+      Serial.printf("[DISCOVERY] ✅ Port assigned: %d\n", assigned_port);
+      Serial.printf("[DISCOVERY] Active config: %s:%d\n", 
+                    computer_ip.c_str(), assigned_port);
+      
+      // Send confirmation
+      sendDataToAssignedPort("STATUS:ESP_READY," + String(ESP_NAME) + "," + WiFi.localIP().toString());
+      
+      // Stop discovery UDP
+      discoveryUdp.stop();
+    }
+  }
+}
+
+void fallbackToClassicMode() {
+  discovery_mode = false;
+  device_status = "Classic Mode";
+  connection_established = true;
+  
+  // Use classic configuration
+  active_laptop_ip = classic_laptop_ip;
+  active_laptop_port = classic_laptop_port;
+  
+  Serial.println("[CLASSIC] Switched to classic mode");
+  Serial.printf("[CLASSIC] Config: %d.%d.%d.%d:%d\n", 
+                active_laptop_ip[0], active_laptop_ip[1], 
+                active_laptop_ip[2], active_laptop_ip[3], active_laptop_port);
+}
+
+void sendDataToAssignedPort(String data) {
+  if (port_assigned && assigned_port > 0) {
+    UdpPortSend.beginPacket(active_laptop_ip, assigned_port);
+    UdpPortSend.print(data);
+    UdpPortSend.endPacket();
+  } else {
+    // Fallback to classic mode communication
+    sendDebugOSCString(data);
+  }
+}
+
+void handleAutoDiscoveryCommands(char* command) {
+  // Handle commands specific to auto-discovery mode
+  if (strncmp(command, "LED_TEST", 8) == 0) {
+    // LED test for auto-discovery
+    for (int i = 0; i < NUM_LEDS; i++) {
+      strip.setPixelColor(i, strip.Color(255, 0, 0));
+    }
+    strip.show();
+    delay(500);
+    for (int i = 0; i < NUM_LEDS; i++) {
+      strip.setPixelColor(i, strip.Color(0, 255, 0));
+    }
+    strip.show();
+    delay(500);
+    for (int i = 0; i < NUM_LEDS; i++) {
+      strip.setPixelColor(i, strip.Color(0, 0, 255));
+    }
+    strip.show();
+    delay(500);
+    for (int i = 0; i < NUM_LEDS; i++) {
+      strip.setPixelColor(i, strip.Color(0, 0, 0));
+    }
+    strip.show();
+    Serial.println("[AUTO-DISCOVERY] LED test completed");
+  }
+  else if (strncmp(command, "PING", 4) == 0) {
+    sendDataToAssignedPort("PONG:" + String(ESP_NAME));
+    Serial.println("[AUTO-DISCOVERY] Responded to ping");
+  }
+  else if (strncmp(command, "STATUS_REQUEST", 14) == 0) {
+    String status_info = "STATUS:" + String(ESP_NAME) + ",";
+    status_info += WiFi.localIP().toString() + ",";
+    status_info += String(assigned_port > 0 ? assigned_port : active_laptop_port) + ",";
+    status_info += device_status + ",";
+    status_info += "Brightness:" + String(brightness) + ",";
+    status_info += "ConfigMode:" + String(configMode ? "ON" : "OFF");
+    sendDataToAssignedPort(status_info);
+    Serial.println("[AUTO-DISCOVERY] Sent status info");
+  }
+}
 
 // UART buffer và trạng thái
 String uartBuffer = "";
@@ -195,12 +342,18 @@ void updateRainbowEffect() {
 
 
 
-// Gửi OSC debug: luôn gửi cặp trạng thái + giá trị cảm biến
+// Gửi OSC debug: sử dụng active configuration
 void sendDebugOSCString(const String& message) {
- 
   OSCMessage msg("/debug");
   msg.add(message.c_str());   // Gửi thành 1 argument kiểu chuỗi
-  UdpPortSend.beginPacket(laptop_ip, laptop_port);
+  
+  // Use assigned port if available, otherwise classic mode
+  if (port_assigned && assigned_port > 0) {
+    UdpPortSend.beginPacket(active_laptop_ip, assigned_port);
+  } else {
+    UdpPortSend.beginPacket(active_laptop_ip, active_laptop_port);
+  }
+  
   msg.send(UdpPortSend);
   UdpPortSend.endPacket();
   msg.empty();
@@ -327,24 +480,15 @@ void setup() {
   strip.show();
   strip.setBrightness(brightness);
 
-
-
-
-
-
-
-
   Serial.begin(115200);
   SerialPIC.begin(9600, SERIAL_8N1, 33, 26);
 
-
-
-
-
-
-
-
-  Serial.println("ESP32 Ready to receive from PIC!");
+  Serial.println("🎮 ESP32 Cube Touch Hybrid System Starting...");
+  Serial.printf("Device Name: %s\n", ESP_NAME);
+  Serial.printf("Auto-Discovery: %s\n", discovery_mode ? "ENABLED" : "DISABLED");
+  
+  // WiFi Connection
+  Serial.println("Connecting to WiFi...");
   WiFi.begin(ssid, password);
   int attempt = 0;
   while (WiFi.status() != WL_CONNECTED) {
@@ -352,20 +496,57 @@ void setup() {
     Serial.print(".");
     attempt++;
     if (attempt > 30) {
-      Serial.println("Kết nối WiFi thất bại!");
+      Serial.println("\n❌ WiFi connection failed!");
       while(1);
     }
   }
-  Serial.println("\nWiFi connected!");
-  Serial.print("Local IP: "); Serial.println(WiFi.localIP());
-  Serial.printf("Resolume IP: %d.%d.%d.%d:%d\n", 
-                resolume_ip[0], resolume_ip[1], resolume_ip[2], resolume_ip[3], resolume_port);
-  Serial.printf("Laptop IP: %d.%d.%d.%d:%d\n", 
-                laptop_ip[0], laptop_ip[1], laptop_ip[2], laptop_ip[3], laptop_port);
   
+  Serial.println("\n✅ WiFi connected!");
+  Serial.printf("Local IP: %s\n", WiFi.localIP().toString().c_str());
+  
+  // Initialize UDP for different modes
   UdpPortSend.begin(9000);
   udp.begin(localUdpPort);
+  
+  if (discovery_mode) {
+    // Auto-Discovery Mode Setup
+    discoveryUdp.begin(discoveryLocalPort);
+    device_status = "Discovering";
+    
+    // Try to auto-detect computer IP from gateway
+    IPAddress gateway = WiFi.gatewayIP();
+    computer_ip = gateway.toString();
+    
+    // Set initial active config for discovery
+    active_laptop_ip = IPAddress();
+    active_laptop_ip.fromString(computer_ip);
+    active_laptop_port = discovery_port;
+    
+    Serial.println("🔍 AUTO-DISCOVERY MODE");
+    Serial.printf("Discovery target: %s:%d\n", computer_ip.c_str(), discovery_port);
+    Serial.printf("Local discovery port: %d\n", discoveryLocalPort);
+    Serial.printf("Heartbeat interval: %d ms\n", HEARTBEAT_INTERVAL);
+    Serial.println("Waiting for port assignment...");
+  } else {
+    // Classic Mode Setup
+    active_laptop_ip = classic_laptop_ip;
+    active_laptop_port = classic_laptop_port;
+    device_status = "Classic Ready";
+    connection_established = true;
+    
+    Serial.println("🎹 CLASSIC MODE");
+    Serial.printf("Target: %d.%d.%d.%d:%d\n", 
+                  active_laptop_ip[0], active_laptop_ip[1], 
+                  active_laptop_ip[2], active_laptop_ip[3], active_laptop_port);
+  }
+  
+  // Resolume Configuration
+  Serial.printf("Resolume: %d.%d.%d.%d:%d\n", 
+                resolume_ip[0], resolume_ip[1], resolume_ip[2], resolume_ip[3], resolume_port);
   Serial.printf("Listening UDP on port %d\n", localUdpPort);
+  
+  Serial.println("🚀 System ready!");
+  Serial.println("=" * 50);
 }
 
 
@@ -566,12 +747,26 @@ void loop() {
 
       // Chỉ gửi khi cả giá trị và trạng thái đã nhận đủ từ PIC
       if (latestStatus != -1 && latestValue != -1) {
-       
-        // Debug UART: in trạng thái, giá trị, thời gian chạm nếu có
+        // Enhanced debug với mode information
         Serial.print("[UART Debug] Status: ");
         Serial.print(latestStatus ? "Touched" : "None");
         Serial.print(" | Value: ");
         Serial.print(latestValue);
+        
+        // Enhanced data format for auto-discovery
+        String enhanced_data = "TOUCH_DATA," + String(latestValue) + ",LED," + 
+                              String(last_r) + "," + String(last_g) + "," + String(last_b) + "," +
+                              "STATUS," + String(latestStatus) + "," +
+                              "ESP_NAME," + String(ESP_NAME) + "," +
+                              "MODE," + (discovery_mode ? "AUTO" : "CLASSIC");
+        
+        if (port_assigned) {
+          // Send to assigned port
+          sendDataToAssignedPort(enhanced_data);
+        } else {
+          // Send via OSC (classic mode)
+          sendDebugOSCString(enhanced_data);
+        }
 
 
 
@@ -637,10 +832,32 @@ void loop() {
       uartBuffer += c;
     }
   }
+  
+  // Periodic status reporting for auto-discovery
+  static unsigned long last_status_report = 0;
+  if (port_assigned && millis() - last_status_report > 30000) {  // Every 30 seconds
+    last_status_report = millis();
+    String status_report = "PERIODIC_STATUS:" + String(ESP_NAME) + "," + 
+                          device_status + "," + 
+                          "UPTIME:" + String(millis() / 1000) + "," +
+                          "FREE_HEAP:" + String(ESP.getFreeHeap());
+    sendDataToAssignedPort(status_report);
+  }
+  
+  // Connection monitoring
+  static unsigned long last_connection_check = 0;
+  if (millis() - last_connection_check > 10000) {  // Every 10 seconds
+    last_connection_check = millis();
+    
+    if (discovery_mode && !port_assigned && heartbeat_attempts >= MAX_HEARTBEAT_ATTEMPTS) {
+      // Reset heartbeat attempts periodically to retry discovery
+      heartbeat_attempts = 0;
+      Serial.println("[DISCOVERY] Retrying auto-discovery...");
+    }
+  }
+  
   // Có thể bổ sung gửi trạng thái định kỳ/timer ở đây nếu muốn
 }
-
-
 
 
 
