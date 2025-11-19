@@ -121,3 +121,48 @@ class CommunicationHandler:
         self.total_packets_sent = 0
         self.total_packets_received = 0
         self.add_log("Statistics reset")
+    
+    def update_resolume_ip(self, new_ip: str) -> bool:
+        """Cập nhật IP Resolume và gửi lệnh đến ESP32"""
+        try:
+            # Kiểm tra format IP
+            parts = new_ip.split('.')
+            if len(parts) != 4 or not all(0 <= int(part) <= 255 for part in parts):
+                raise ValueError("Invalid IP format")
+            
+            # Cập nhật config
+            old_ip = self.config.resolume_ip
+            self.config.resolume_ip = new_ip
+            
+            # Gửi lệnh đến ESP32
+            success = self.send_ip_config(new_ip)
+            
+            if success:
+                self.add_log(f"Resolume IP updated: {old_ip} -> {new_ip}")
+                return True
+            else:
+                # Rollback nếu gửi thất bại
+                self.config.resolume_ip = old_ip
+                return False
+                
+        except ValueError as e:
+            self.add_log(f"Invalid IP format: {new_ip}")
+            return False
+        except Exception as e:
+            self.add_log(f"Error updating Resolume IP: {str(e)}")
+            return False
+    
+    def send_ip_config(self, ip: str) -> bool:
+        """Gửi lệnh cấu hình IP đến ESP32"""
+        # Format: RESOLUME_IP:192.168.0.241
+        command = f"RESOLUME_IP:{ip}"
+        return self.send_udp_command(command)
+    
+    def get_current_resolume_ip(self) -> str:
+        """Lấy IP Resolume hiện tại"""
+        return self.config.resolume_ip
+    
+    def request_current_ip(self) -> bool:
+        """Yêu cầu ESP32 báo cáo IP hiện tại"""
+        command = "GET_IP_CONFIG"
+        return self.send_udp_command(command)

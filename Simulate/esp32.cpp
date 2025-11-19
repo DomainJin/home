@@ -21,7 +21,6 @@ const char* password = "admin123";
 
 
 
-
 WiFiUDP UdpPortSend;
 WiFiUDP udp;
 
@@ -30,10 +29,8 @@ WiFiUDP udp;
 
 // Địa chỉ và cổng OSC laptop và Resolume
 
-
-
-
-const IPAddress resolume_ip(192, 168, 0, 241);
+// IP Resolume mặc định - có thể thay đổi qua lệnh
+IPAddress resolume_ip(192, 168, 0, 241);
 const unsigned int resolume_port = 7000;
 
 
@@ -361,6 +358,11 @@ void setup() {
   }
   Serial.println("\nWiFi connected!");
   Serial.print("Local IP: "); Serial.println(WiFi.localIP());
+  Serial.printf("Resolume IP: %d.%d.%d.%d:%d\n", 
+                resolume_ip[0], resolume_ip[1], resolume_ip[2], resolume_ip[3], resolume_port);
+  Serial.printf("Laptop IP: %d.%d.%d.%d:%d\n", 
+                laptop_ip[0], laptop_ip[1], laptop_ip[2], laptop_ip[3], laptop_port);
+  
   UdpPortSend.begin(9000);
   udp.begin(localUdpPort);
   Serial.printf("Listening UDP on port %d\n", localUdpPort);
@@ -452,6 +454,32 @@ void loop() {
       SerialPIC.print(thresholdValue);
       SerialPIC.print("\n");
       Serial.printf("Sent threshold to PIC: %d\n", thresholdValue);
+    }
+    // Kiểm tra lệnh cập nhật IP Resolume
+    else if (strncmp(incomingPacket, "RESOLUME_IP:", 12) == 0) {
+      String ipStr = String(incomingPacket + 12);
+      ipStr.trim(); // Xóa khoảng trắng
+      
+      // Parse IP từ string "192.168.0.241"
+      int ip1, ip2, ip3, ip4;
+      if (sscanf(ipStr.c_str(), "%d.%d.%d.%d", &ip1, &ip2, &ip3, &ip4) == 4) {
+        // Kiểm tra tính hợp lệ của IP
+        if (ip1 >= 0 && ip1 <= 255 && ip2 >= 0 && ip2 <= 255 && 
+            ip3 >= 0 && ip3 <= 255 && ip4 >= 0 && ip4 <= 255) {
+          resolume_ip = IPAddress(ip1, ip2, ip3, ip4);
+          Serial.printf("Resolume IP updated to: %d.%d.%d.%d\n", ip1, ip2, ip3, ip4);
+          
+          // Gửi xác nhận về laptop
+          String confirmMsg = "Resolume IP updated: " + ipStr;
+          sendDebugOSCString(confirmMsg);
+        } else {
+          Serial.println("Invalid IP format received");
+          sendDebugOSCString("Error: Invalid IP format");
+        }
+      } else {
+        Serial.println("Failed to parse IP address");
+        sendDebugOSCString("Error: Failed to parse IP");
+      }
     }
     // Kiểm tra lệnh tăng/giảm độ sáng
     else if (strcmp(incomingPacket, "UP") == 0) {

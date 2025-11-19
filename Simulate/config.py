@@ -12,6 +12,8 @@ class AppConfig:
         self.esp_ip = '192.168.0.43'
         self.esp_port = 4210
         self.osc_port = 7000
+        self.resolume_ip = '192.168.0.241'  # IP Resolume mặc định
+        self.resolume_port = 7000
         
         # GUI settings
         self.window_title = "Cube Touch Monitor"

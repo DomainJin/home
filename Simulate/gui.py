@@ -346,6 +346,51 @@ class CubeTouchGUI:
                             font=("Segoe UI", 11), bg=self.config.colors['warning'], 
                             fg="white", relief=tk.FLAT, cursor="hand2", pady=8)
         btn_test.grid(row=1, column=0, pady=(0, 10), sticky="ew")
+        
+        # IP Configuration frame
+        ip_config_frame = tk.LabelFrame(config_frame, text="🌐 Cấu hình IP Resolume",
+                                       font=("Segoe UI", 11, "bold"),
+                                       bg=self.config.colors['background'],
+                                       fg=self.config.colors['secondary'])
+        ip_config_frame.grid(row=3, column=0, sticky="ew", pady=(15, 0))
+        ip_config_frame.grid_columnconfigure(0, weight=1)
+        
+        # Current IP display
+        current_ip_frame = tk.Frame(ip_config_frame, bg=self.config.colors['background'])
+        current_ip_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
+        current_ip_frame.grid_columnconfigure(1, weight=1)
+        
+        tk.Label(current_ip_frame, text="IP hiện tại:", 
+                font=("Segoe UI", 10), 
+                bg=self.config.colors['background']).grid(row=0, column=0, sticky="w")
+        
+        self.current_ip_label = tk.Label(current_ip_frame, 
+                                        text=self.config.resolume_ip,
+                                        font=("Segoe UI", 10, "bold"),
+                                        bg=self.config.colors['background'],
+                                        fg=self.config.colors['success'])
+        self.current_ip_label.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        
+        # New IP entry
+        new_ip_frame = tk.Frame(ip_config_frame, bg=self.config.colors['background'])
+        new_ip_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+        new_ip_frame.grid_columnconfigure(1, weight=1)
+        
+        tk.Label(new_ip_frame, text="IP mới:", 
+                font=("Segoe UI", 10), 
+                bg=self.config.colors['background']).grid(row=0, column=0, sticky="w")
+        
+        self.new_ip_entry = tk.Entry(new_ip_frame, font=("Segoe UI", 10))
+        self.new_ip_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        self.new_ip_entry.insert(0, self.config.resolume_ip)
+        
+        # Update button
+        btn_update_ip = tk.Button(ip_config_frame, text="🔄 Cập nhật IP Resolume",
+                                 command=self.update_resolume_ip,
+                                 font=("Segoe UI", 10), 
+                                 bg=self.config.colors['info'], 
+                                 fg="white", relief=tk.FLAT, cursor="hand2", pady=8)
+        btn_update_ip.grid(row=2, column=0, pady=(5, 10), sticky="ew", padx=10)
     
     def create_touch_section(self):
         """Tạo section hiển thị thông tin touch sensor"""
@@ -524,10 +569,22 @@ class CubeTouchGUI:
         info_frame = tk.Frame(footer, bg="#34495e")
         info_frame.grid(row=0, column=2, sticky="e", padx=30, pady=15)
         
-        time_label = tk.Label(info_frame, text="System Ready",
-                             font=("Segoe UI", 10), 
-                             bg="#34495e", fg="#95a5a6")
-        time_label.grid(row=0, column=0)
+        # Resolume IP info
+        resolume_info = tk.Label(info_frame, 
+                                text=f"Resolume: {self.config.resolume_ip}:{self.config.resolume_port}",
+                                font=("Segoe UI", 9), 
+                                bg="#34495e", fg="#3498db")
+        resolume_info.grid(row=0, column=0, sticky="e")
+        
+        # ESP32 IP info
+        esp_info = tk.Label(info_frame, 
+                           text=f"ESP32: {self.config.esp_ip}:{self.config.esp_port}",
+                           font=("Segoe UI", 9), 
+                           bg="#34495e", fg="#95a5a6")
+        esp_info.grid(row=1, column=0, sticky="e")
+        
+        # Store reference để cập nhật sau
+        self.resolume_info_label = resolume_info
     
     # Event handlers
     def choose_color(self):
@@ -599,6 +656,54 @@ class CubeTouchGUI:
         success = self.led_controller.send_led_test()
         if not success:
             messagebox.showwarning("Config Mode", "Vui lòng bật Config Mode trước!")
+    
+    def update_resolume_ip(self):
+        """Cập nhật IP Resolume"""
+        try:
+            new_ip = self.new_ip_entry.get().strip()
+            
+            if not new_ip:
+                messagebox.showerror("Lỗi", "Vui lòng nhập IP hợp lệ!")
+                return
+            
+            # Xác nhận thay đổi
+            old_ip = self.config.resolume_ip
+            confirm = messagebox.askyesno(
+                "Xác nhận", 
+                f"Bạn có chắc muốn thay đổi IP Resolume?\n\n"
+                f"Từ: {old_ip}\n"
+                f"Thành: {new_ip}"
+            )
+            
+            if not confirm:
+                return
+            
+            # Thực hiện cập nhật
+            success = self.comm_handler.update_resolume_ip(new_ip)
+            
+            if success:
+                # Cập nhật hiển thị
+                self.current_ip_label.config(text=new_ip)
+                # Cập nhật footer info nếu tồn tại
+                if hasattr(self, 'resolume_info_label'):
+                    self.resolume_info_label.config(
+                        text=f"Resolume: {new_ip}:{self.config.resolume_port}")
+                messagebox.showinfo("Thành công", 
+                                   f"Đã cập nhật IP Resolume thành: {new_ip}")
+            else:
+                messagebox.showerror("Lỗi", 
+                                   "Không thể cập nhật IP. Vui lòng kiểm tra:\n"
+                                   "- Format IP hợp lệ (vd: 192.168.1.100)\n"
+                                   "- Kết nối với ESP32")
+                # Reset lại giá trị cũ
+                self.new_ip_entry.delete(0, tk.END)
+                self.new_ip_entry.insert(0, old_ip)
+                
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Có lỗi xảy ra: {str(e)}")
+            # Reset lại giá trị cũ
+            self.new_ip_entry.delete(0, tk.END)
+            self.new_ip_entry.insert(0, self.config.resolume_ip)
     
     def send_threshold(self):
         """Gửi ngưỡng"""
