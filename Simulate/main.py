@@ -12,18 +12,23 @@ from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import BlockingOSCUDPServer
 
 # Import các module riêng
-from gui import CubeTouchGUI
+from gui import CubeTouchGUI, HybridCubeTouchGUI
 from communication import CommunicationHandler
 from config import AppConfig
+from auto_discovery_manager import AutoDiscoveryManager
+from auto_discovery_gui import AutoDiscoveryGUI
 
 class CubeTouchApp:
     def __init__(self):
         """Khởi tạo ứng dụng chính"""
         self.config = AppConfig()
         self.comm_handler = CommunicationHandler(self.config)
+        self.auto_discovery_manager = AutoDiscoveryManager(self.config)
         self.root = None
         self.gui = None
+        self.auto_gui = None
         self.osc_thread = None
+        self.mode = "hybrid"  # "classic", "auto_discovery", "hybrid"
         
     def setup_osc_server(self):
         """Thiết lập OSC server để nhận dữ liệu từ ESP32"""
@@ -46,7 +51,38 @@ class CubeTouchApp:
         # Tạo cửa sổ chính
         self.root = tk.Tk()
         
-        # Khởi tạo giao diện
+        if self.mode == "hybrid":
+            self.run_hybrid_mode()
+        elif self.mode == "auto_discovery":
+            self.run_auto_discovery_mode()
+        else:
+            self.run_classic_mode()
+    
+    def run_hybrid_mode(self):
+        """Chạy chế độ hybrid - kết hợp classic và auto-discovery"""
+        # Tạo hybrid GUI với cả hai chức năng
+        self.gui = HybridCubeTouchGUI(self.root, self.comm_handler, self.auto_discovery_manager, self.config)
+        
+        # Thiết lập OSC server cho classic mode
+        self.setup_osc_server()
+        
+        # Log khởi tạo
+        self.comm_handler.add_log("🚀 Hybrid Application started")
+        self.comm_handler.add_log(f"Classic ESP32: {self.config.esp_ip}:{self.config.esp_port}")
+        self.comm_handler.add_log(f"OSC Port: {self.config.osc_port}")
+        self.comm_handler.add_log(f"Auto-Discovery Port: 7000")
+        
+        # Chạy giao diện
+        self.root.mainloop()
+    
+    def run_auto_discovery_mode(self):
+        """Chạy chế độ auto-discovery only"""
+        self.auto_gui = AutoDiscoveryGUI(self.root, self.config)
+        self.root.mainloop()
+    
+    def run_classic_mode(self):
+        """Chạy chế độ classic only"""
+        # Khởi tạo giao diện classic
         self.gui = CubeTouchGUI(self.root, self.comm_handler, self.config)
         
         # Thiết lập OSC server
@@ -63,7 +99,18 @@ class CubeTouchApp:
 def main():
     """Entry point chính"""
     try:
+        # Parse command line arguments
+        mode = "hybrid"  # default
+        if len(sys.argv) > 1:
+            if sys.argv[1] == "--classic":
+                mode = "classic"
+            elif sys.argv[1] == "--auto-discovery":
+                mode = "auto_discovery"
+            elif sys.argv[1] == "--hybrid":
+                mode = "hybrid"
+        
         app = CubeTouchApp()
+        app.mode = mode
         app.run()
     except KeyboardInterrupt:
         print("\nApplication stopped by user")
