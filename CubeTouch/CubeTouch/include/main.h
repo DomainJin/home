@@ -6,6 +6,7 @@
 #include <WiFiUdp.h>
 #include <Adafruit_NeoPixel.h>
 #include <ArduinoJson.h>
+#include "customOSC.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
@@ -37,7 +38,9 @@ typedef enum {
     EVENT_UART_DATA,
     EVENT_UDP_COMMAND,
     EVENT_LED_UPDATE,
-    EVENT_WIFI_STATUS
+    EVENT_WIFI_STATUS,
+    EVENT_TOUCH_DATA,
+    EVENT_OSC_SEND
 } EventType_t;
 
 // Event structure
@@ -47,6 +50,10 @@ typedef struct {
     uint8_t r, g, b;
     int effect;
     bool autoMode;
+    int touchStatus;
+    int touchValue;
+    String oscAddress;
+    int oscValue;
 } CustomEvent_t;
 
 // WiFi settings

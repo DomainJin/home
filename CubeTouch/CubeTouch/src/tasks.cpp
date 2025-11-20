@@ -1,6 +1,7 @@
 #include "main.h"
 #include "led.h"
 #include "udpLed.h"
+#include "touchEvent.h"
 
 // WiFi Task - runs on Core 0
 void wifiTask(void *parameter) {
@@ -50,6 +51,11 @@ void wifiTask(void *parameter) {
     udp.print("{\"status\":\"ESP32_READY\",\"ip\":\"" + WiFi.localIP().toString() + "\"}");
     udp.endPacket();
     
+    // Send initial OSC debug message
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Wait for network to settle
+    String startMsg = "ESP32 with Touch System Ready - PlatformIO Build";
+    sendDebugOSCString(startMsg);
+    
     // Monitor WiFi status
     while (1) {
         if (WiFi.status() != WL_CONNECTED) {
@@ -78,38 +84,138 @@ void udpTask(void *parameter) {
         xSemaphoreGive(serialMutex);
     }
     
+    // Variables for UDP processing (from main1.ino)
+    char incomingPacket[255];
+    extern bool touchProcessingDisabled;
+    extern bool configMode;
+    
     while (1) {
-        // Check for packets with better error handling
-        if (udp.available()) {
-            int packetSize = udp.parsePacket();
-            if (packetSize > 0) {
-                char incomingPacket[255];
-                int len = udp.read(incomingPacket, packetSize);
-                if (len > 0) {
-                    incomingPacket[len] = 0;
+        // Check for UDP packets (same as main1.ino)
+        int packetSize = udp.parsePacket();
+        if (packetSize) {
+            int len = udp.read(incomingPacket, 254);
+            incomingPacket[len] = 0;
+            
+            if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                Serial.printf("Received: %s\n", incomingPacket);
+                xSemaphoreGive(serialMutex);
+            }
+            
+            // Config mode commands (from main1.ino)
+            if (strncmp(incomingPacket, "CONFIG:", 7) == 0) {
+                int configState = atoi(incomingPacket + 7);
+                configMode = (configState == 1);
+                if (configMode) {
+                    touchProcessingDisabled = true;
+                    effectState.effectEnable = true;
+                } else {
+                    touchProcessingDisabled = false;
+                }
+                if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    Serial.printf("Config Mode: %s\n", configMode ? "ON" : "OFF");
+                    xSemaphoreGive(serialMutex);
+                }
+            }
+            
+            // LED control commands (config mode only)
+            else if (strncmp(incomingPacket, "LEDCTRL:", 8) == 0 && configMode) {
+                String command = String(incomingPacket + 8);
+                int firstComma = command.indexOf(',');
+                int secondComma = command.indexOf(',', firstComma + 1);
+                int thirdComma = command.indexOf(',', secondComma + 1);
+                
+                if (firstComma > 0 && secondComma > 0 && thirdComma > 0) {
+                    String indexStr = command.substring(0, firstComma);
+                    int r = command.substring(firstComma + 1, secondComma).toInt();
+                    int g = command.substring(secondComma + 1, thirdComma).toInt();
+                    int b = command.substring(thirdComma + 1).toInt();
                     
+                    if (indexStr == "ALL") {
+                        for (int i = 0; i < LED_COUNT; i++) {
+                            strip.setPixelColor(i, strip.Color(r, g, b));
+                        }
+                    } else {
+                        int index = indexStr.toInt();
+                        if (index >= 0 && index < LED_COUNT) {
+                            strip.setPixelColor(index, strip.Color(r, g, b));
+                        }
+                    }
+                    strip.show();
                     if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                        Serial.printf("Received UDP packet from %s:%d - Size: %d bytes\n", 
-                                    udp.remoteIP().toString().c_str(), udp.remotePort(), packetSize);
-                        Serial.printf("Packet content: %s\n", incomingPacket);
+                        Serial.printf("Direct LED Control: %s R=%d G=%d B=%d\n", indexStr.c_str(), r, g, b);
                         xSemaphoreGive(serialMutex);
                     }
-                    
-                    // Parse JSON command
-                    JsonDocument doc;
-                    DeserializationError error = deserializeJson(doc, incomingPacket);
-                    
-                    if (!error) {
-                        CustomEvent_t event;
-                        event.type = EVENT_UDP_COMMAND;
-                        event.data = String(incomingPacket);
-                        xQueueSend(eventQueue, &event, pdMS_TO_TICKS(100));
-                    } else {
-                        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                            Serial.println("Failed to parse JSON");
-                            xSemaphoreGive(serialMutex);
-                        }
-                        sendResponse("ERROR: Invalid JSON");
+                }
+            }
+            
+            // Rainbow effect (config mode only)
+            else if (strcmp(incomingPacket, "RAINBOW:START") == 0 && configMode) {
+                startRainbowEffect();
+                if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    Serial.println("Rainbow effect started via config mode");
+                    xSemaphoreGive(serialMutex);
+                }
+            }
+            
+            // LED enable/disable
+            else if (strncmp(incomingPacket, "LED:", 4) == 0) {
+                int ledState = atoi(incomingPacket + 4);
+                effectState.effectEnable = (ledState == 1);
+                if (!effectState.effectEnable) {
+                    for (int i = 0; i < LED_COUNT; i++) {
+                        strip.setPixelColor(i, strip.Color(0, 0, 0));
+                    }
+                    strip.show();
+                }
+                if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    Serial.printf("LED Control: %s\n", effectState.effectEnable ? "ON" : "OFF");
+                    xSemaphoreGive(serialMutex);
+                }
+            }
+            
+            // Threshold setting
+            else if (strncmp(incomingPacket, "THRESHOLD:", 10) == 0) {
+                int thresholdValue = atoi(incomingPacket + 10);
+                extern HardwareSerial SerialPIC;
+                SerialPIC.print("THRESHOLD:");
+                SerialPIC.print(thresholdValue);
+                SerialPIC.print("\n");
+                if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    Serial.printf("Sent threshold to PIC: %d\n", thresholdValue);
+                    xSemaphoreGive(serialMutex);
+                }
+            }
+            
+            // Brightness control  
+            else if (strcmp(incomingPacket, "UP") == 0) {
+                int brightness = strip.getBrightness() + 16;
+                if (brightness > 255) brightness = 255;
+                strip.setBrightness(brightness);
+                if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    Serial.printf("Brightness UP: %d\n", brightness);
+                    xSemaphoreGive(serialMutex);
+                }
+            }
+            else if (strcmp(incomingPacket, "DOWN") == 0) {
+                int brightness = strip.getBrightness() - 16;
+                if (brightness < 1) brightness = 1;
+                strip.setBrightness(brightness);
+                if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    Serial.printf("Brightness DOWN: %d\n", brightness);
+                    xSemaphoreGive(serialMutex);
+                }
+            }
+            
+            // Color setting (RGB format)
+            else {
+                int r, g, b;
+                if (sscanf(incomingPacket, "%d %d %d", &r, &g, &b) == 3) {
+                    currentRed = r; 
+                    currentGreen = g; 
+                    currentBlue = b;
+                    if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                        Serial.printf("Set color: R=%d G=%d B=%d\n", r, g, b);
+                        xSemaphoreGive(serialMutex);
                     }
                 }
             }

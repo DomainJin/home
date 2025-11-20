@@ -1,6 +1,7 @@
 #include "udpLed.h"
 #include "led.h"
 #include "uart.h"
+#include "touchEvent.h"
 
 void initUDP() {
     if (udp.begin(udpMonitorPort)) {
@@ -72,6 +73,86 @@ void processCommand(JsonDocument& doc) {
         
         if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             Serial.println("LEDs turned off");
+            xSemaphoreGive(serialMutex);
+        }
+    }
+    // ===== NEW COMMANDS FROM MAIN1.INO =====
+    else if (command == "CONFIG") {
+        int configState = doc["state"];
+        bool configMode = (configState == 1);
+        
+        // Store config mode state (you might want to add this to global variables)
+        extern bool touchProcessingDisabled;
+        touchProcessingDisabled = configMode ? true : false;
+        
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.printf("Config Mode: %s\n", configMode ? "ON" : "OFF");
+            xSemaphoreGive(serialMutex);
+        }
+    }
+    else if (command == "LEDCTRL") {
+        // Direct LED control for config mode
+        String index = doc["index"];
+        int r = doc["r"];
+        int g = doc["g"];
+        int b = doc["b"];
+        
+        if (index == "ALL") {
+            for (int i = 0; i < LED_COUNT; i++) {
+                strip.setPixelColor(i, strip.Color(r, g, b));
+            }
+        } else {
+            int ledIndex = index.toInt();
+            if (ledIndex >= 0 && ledIndex < LED_COUNT) {
+                strip.setPixelColor(ledIndex, strip.Color(r, g, b));
+            }
+        }
+        strip.show();
+        
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.printf("Direct LED Control: %s R=%d G=%d B=%d\n", index.c_str(), r, g, b);
+            xSemaphoreGive(serialMutex);
+        }
+    }
+    else if (command == "RAINBOW") {
+        String action = doc["action"];
+        if (action == "START") {
+            startRainbowEffect();
+            if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                Serial.println("Rainbow effect started via UDP");
+                xSemaphoreGive(serialMutex);
+            }
+        }
+    }
+    else if (command == "LED") {
+        int ledState = doc["state"];
+        effectState.effectEnable = (ledState == 1);
+        if (!effectState.effectEnable) {
+            for (int i = 0; i < LED_COUNT; i++) {
+                strip.setPixelColor(i, strip.Color(0, 0, 0));
+            }
+            strip.show();
+        }
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.printf("LED Control: %s\n", effectState.effectEnable ? "ON" : "OFF");
+            xSemaphoreGive(serialMutex);
+        }
+    }
+    else if (command == "DIR") {
+        int direction = doc["direction"];
+        effectState.ledDirection = (direction == 1) ? 1 : 0;
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.printf("LED Direction: %d\n", effectState.ledDirection);
+            xSemaphoreGive(serialMutex);
+        }
+    }
+    else if (command == "THRESHOLD") {
+        int thresholdValue = doc["value"];
+        // Send threshold to PIC via UART
+        String thresholdCmd = "THRESHOLD:" + String(thresholdValue);
+        uartSerial.println(thresholdCmd);
+        if (xSemaphoreTake(serialMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            Serial.printf("Sent threshold to PIC: %d\n", thresholdValue);
             xSemaphoreGive(serialMutex);
         }
     }
